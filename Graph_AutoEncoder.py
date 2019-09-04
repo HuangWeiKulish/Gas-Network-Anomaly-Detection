@@ -41,7 +41,7 @@ class GCNLayer(nn.Module):  # Graph Convolution Layer
 
 class GCNAE(nn.Module):  # Graph Auto-Encoder
 
-    def __init__(self, in_feats, hidden_dim_list, dropout, activf=F.relu):
+    def __init__(self, in_feats, gcn_out, hidden_dim_list, dropout, activf=F.relu):
         """
         This is a symmetric auto-encoder
         :param in_feats:
@@ -50,7 +50,8 @@ class GCNAE(nn.Module):  # Graph Auto-Encoder
         """
         super(GCNAE, self).__init__()
         self.in_feats, self.hidden_dim_list, self.dropout, self.activf = in_feats, hidden_dim_list, dropout, activf
-        self.encoding_dims = [self.in_feats] + self.hidden_dim_list
+        self.gcn_layer = GCNLayer(in_feats, gcn_out, dropout, activf)
+        self.encoding_dims = [gcn_out] + hidden_dim_list
         self.decoding_dims = self.encoding_dims[::-1]
         self.encoder = self.encode()
         self.decoder = self.decode()
@@ -59,17 +60,23 @@ class GCNAE(nn.Module):  # Graph Auto-Encoder
         layers = []
         n_layers = len(self.encoding_dims)
         for n in range(1, n_layers):
-            layers.append(GCNLayer(self.encoding_dims[n-1], self.encoding_dims[n], self.dropout, self.activf))
+            layers.append(nn.LSTM(input_size=self.in_feats, hidden_size=10, num_layers=1))
         return nn.Sequential(*layers)
 
     def decode(self):
         layers = []
         n_layers = len(self.decoding_dims)
         for n in range(1, n_layers):
-            layers.append(GCNLayer(self.decoding_dims[n-1], self.decoding_dims[n], self.dropout, self.activf))
+            layers.append(nn.LSTM(self.decoding_dims[n-1], self.decoding_dims[n], self.dropout, self.activf))
         return nn.Sequential(*layers)
 
-    def forward(self):
-        x = self.encoder(self.in_feats)
+    def forward(self, g, input):
+        x = self.gcn_layer(g, input)
+        x = self.encoder(x)
         x = self.decoder(x)
         return x
+
+
+
+
+

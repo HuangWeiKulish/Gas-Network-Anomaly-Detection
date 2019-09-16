@@ -3,8 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-#gcn_msg = dgl.function.copy_src(src='h', out='m')  # message
-
 
 def gcn_msg(edges):
     return {'m': edges.src['h']}
@@ -15,10 +13,10 @@ def gcn_reduce(nodes):
     return {'h': torch.mean(nodes.mailbox['m'], dim=1)}
 
 
-class TGCNCell(nn.Module):  # Graph Convolution Layer
+class TGCNLayer(nn.Module):  # Temporal Graph Convolution Layer
 
     def __init__(self, in_feats, out_feats, tempo_nlayers=2, dropout=0.1, activf=F.relu, bias=True):
-        super(TGCNCell, self).__init__()
+        super(TGCNLayer, self).__init__()
         self.temporal_cell = nn.LSTM(input_size=in_feats, hidden_size=out_feats, num_layers=tempo_nlayers, bias=bias,
                                      dropout=dropout, batch_first=True)  # set bach_first=True so that input format is (batch, seq_len, input_size)
         self.dropout = dropout  # outputs are scaled by (1/(1-dropout)), default value in F.dropout is 0.5
@@ -52,9 +50,10 @@ class TGCNCell(nn.Module):  # Graph Convolution Layer
         return out
 
 
-class TGCNAE(nn.Module):  # Graph Auto-Encoder
+class TGCNAE(nn.Module):  # Temporal Graph Convolutional Auto-Encoder
 
-    def __init__(self, in_feats, tgcnout_feats, hidden_dim_list, dropout, activf=F.relu):
+    def __init__(self, in_feats, tgcnout_feats, seq_length, hidden_dim_list,
+                 tempo_nlayers=2, dropout=0.1, activf=F.relu, bias=True):
         """
         This is a symmetric auto-encoder
         :param in_feats:
@@ -62,14 +61,16 @@ class TGCNAE(nn.Module):  # Graph Auto-Encoder
         :param dropout:
         """
         super(TGCNAE, self).__init__()
-        self.in_feats, self.hidden_dim_list, self.dropout, self.activf = in_feats, hidden_dim_list, dropout, activf
-        self.tgcn_layer = TGCNCell(in_feats, tgcnout_feats, dropout, activf)
-        self.encoding_dims = [tgcnout_feats] + hidden_dim_list
+        #self.in_feats, self.hidden_dim_list, self.dropout, self.activf = in_feats, hidden_dim_list, dropout, activf
+        self.tgcn_layer = TGCNLayer(in_feats, tgcnout_feats, tempo_nlayers, dropout, activf, bias)
+
+        self.encoding_dims = [seq_length] + hidden_dim_list
         self.decoding_dims = self.encoding_dims[::-1]
-        self.encoder = self.encode()
-        self.decoder = self.decode()
+        self.encoder = self.encode()  # sequence to sequence encoder
+        self.decoder = self.decode()  # sequence to sequence decoder
 
     def encode(self):
+        # sequence to sequence encoder
         layers = []
         n_layers = len(self.encoding_dims)
         for n in range(1, n_layers):
@@ -78,6 +79,7 @@ class TGCNAE(nn.Module):  # Graph Auto-Encoder
         return nn.Sequential(*layers)
 
     def decode(self):
+        # sequence to sequence decoder
         layers = []
         n_layers = len(self.decoding_dims)
         for n in range(1, n_layers):
@@ -86,20 +88,24 @@ class TGCNAE(nn.Module):  # Graph Auto-Encoder
         return nn.Sequential(*layers)
 
     def forward(self, g, inputs):
-        x = self.tgcn_layer(g, inputs)
-        x = self.encoder(x)
-        x = self.decoder(x)
+        x = self.tgcn_layer(g, inputs)  # x.shape = (number_nodes, number_samples, sequence_length, tgcnout_feats)
+        x = x.permute(0, 1, 3, 2)  # x.shape = (number_nodes, number_samples, tgcnout_feats, sequence_length)
+        x = self.encoder(x)  # x.shape = (number_nodes, number_samples, tgcnout_feats, encoded_length)
+        x = self.decoder(x)  # x.shape = (number_nodes, number_samples, tgcnout_feats, decoded_length)
+        x = x.permute(0, 1, 3, 2)  # x.shape = (number_nodes, number_samples, decoded_length, tgcnout_feats)
         return x
 
 
 #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # PyTorch v0.4.0
 in_feats = 3  # 2 time features and 1 pressure features
 tgcnout_feats = 1  # output 1 feature from tgcn cell
+seq_length = 144
 hidden_dim_list = [20, 10]
 dropout = 0.1
 activf = F.relu
 
-gasnetwork_model = TGCNAE(in_feats, tgcnout_feats, hidden_dim_list, dropout, activf)
+gasnetwork_model = TGCNAE(in_feats, tgcnout_feats, seq_length, hidden_dim_list,
+                          tempo_nlayers=2, dropout=0.1, activf=F.relu, bias=True)
 print(gasnetwork_model)
 
 

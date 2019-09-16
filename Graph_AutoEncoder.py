@@ -1,17 +1,26 @@
-import dgl.function as dfn
+import dgl
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-gcn_msg = dfn.copy_src(src='h', out='m')  # message
-gcn_reduce = dfn.sum(msg='m', out='h')  # reduce function
+#gcn_msg = dgl.function.copy_src(src='h', out='m')  # message
+
+
+def gcn_msg(edges):
+    return {'m': edges.src['h']}
+
+
+def gcn_reduce(nodes):
+    # Todo: change it to weighted average, based on edge values (train it?)
+    return {'h': torch.mean(nodes.mailbox['m'], dim=1)}
 
 
 class TGCNCell(nn.Module):  # Graph Convolution Layer
 
-    def __init__(self, in_feats, out_feats, dropout=0.0, activf=F.relu, bias=True):
+    def __init__(self, in_feats, out_feats, tempo_nlayers=2, dropout=0.1, activf=F.relu, bias=True):
         super(TGCNCell, self).__init__()
-        self.temporal_cell = nn.LSTMCell(in_feats, out_feats, bias)  # input as (seq_len, batch, input_size), unless set bach_first=True then input use (batch, seq_len, input_size)
-        #self.linear = nn.Linear(in_feats, out_feats)
+        self.temporal_cell = nn.LSTM(input_size=in_feats, hidden_size=out_feats, num_layers=tempo_nlayers, bias=bias,
+                                     dropout=dropout, batch_first=True)  # set bach_first=True so that input format is (batch, seq_len, input_size)
         self.dropout = dropout  # outputs are scaled by (1/(1-dropout)), default value in F.dropout is 0.5
         self.activf = activf
 
@@ -20,10 +29,13 @@ class TGCNCell(nn.Module):  # Graph Convolution Layer
         nodes send information computed via the message functions, and aggregates incoming information with the
         reduce functions
         :param g: graph
-        :param inputs: input node features
+        :param inputs: inputs with dimension = (number_nodes, number_samples, sequence_length, number_features)
         :return:
         """
+        number_nodes, number_samples, sequence_length, number_features = inputs.shape
         inputs = F.dropout(inputs, self.dropout, self.training)  # self.training is boolean, True while training
+
+        # ----------------- aggregation from neighboring nodes -------------------------
         # set the node features
         g.ndata['h'] = inputs
         # trigger message passing on all edges
@@ -32,9 +44,10 @@ class TGCNCell(nn.Module):  # Graph Convolution Layer
         g.recv(g.nodes(), gcn_reduce)
         # get the result node features
         h = g.ndata.pop('h')  # return value of key 'h' and remove this item from dictionary g.ndata
-        # perform temporal transformation
-        out = self.temporal_cell(h)  #out = nn.linear(h)
-        # activate
+
+        # ----------------- pass to temporal nn -----------------
+        out = torch.stack([self.temporal_cell(h[i, :, :, :])[0] for i in range(number_nodes)])  # stack output from each node
+        # print(out_list.shape)
         out = self.activf(out)
         return out
 

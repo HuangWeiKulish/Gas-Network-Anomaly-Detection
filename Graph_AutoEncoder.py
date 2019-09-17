@@ -96,6 +96,9 @@ class TGCNAE(nn.Module):  # Temporal Graph Convolutional Auto-Encoder
         return x
 
 
+"""
+# test
+
 #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # PyTorch v0.4.0
 in_feats = 3  # 2 time features and 1 pressure features
 tgcnout_feats = 1  # output 1 feature from tgcn cell
@@ -107,6 +110,9 @@ activf = F.relu
 gasnetwork_model = TGCNAE(in_feats, tgcnout_feats, seq_length, hidden_dim_list,
                           tempo_nlayers=2, dropout=0.1, activf=F.relu, bias=True)
 print(gasnetwork_model)
+
+"""
+
 
 
 
